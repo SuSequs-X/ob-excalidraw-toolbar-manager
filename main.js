@@ -8,6 +8,21 @@ const DEFAULT_SETTINGS = {
   autoReadOnLoad: true,
   showNativeTitle: true,
   leadingDefaultButtons: 2,
+  buttonSelectorMode: 'auto',
+  customButtonSelector: '',
+  buttonSelectorsText: [
+    '.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon',
+    '.excalidraw .tray-misc-tools-container .ToolIcon',
+    '.excalidraw [class*="ExcalidrawObsidianMenu"] .ToolIcon',
+    '.excalidraw .App-menu__right .tray-misc-tools-container .ToolIcon',
+    '.App-menu__right .tray-misc-tools-container .ToolIcon',
+    '.tray-misc-tools-container .ToolIcon',
+    '.excalidraw .App-menu__right .ToolIcon',
+    '.App-menu__right .ToolIcon',
+    '.excalidraw .ToolIcon',
+    '.excalidraw button[aria-label]',
+    '.excalidraw [role="button"]'
+  ].join('\n'),
   stripExtension: true,
   stripNumericPrefix: false,
   displayNames: {},
@@ -92,6 +107,56 @@ function uniqueStrings(arr) {
 function timestampForFile() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
+function safeQueryAll(selector) {
+  try { return Array.from(document.querySelectorAll(selector)); }
+  catch { return []; }
+}
+function commonParent(nodes) {
+  if (!nodes.length) return null;
+  const firstParent = nodes[0].parentElement;
+  if (firstParent && nodes.every(n => n.parentElement === firstParent)) return firstParent;
+  return firstParent || null;
+}
+
+function visibleElement(el) {
+  if (!el || !el.isConnected) return false;
+  const rect = el.getBoundingClientRect?.();
+  if (!rect) return true;
+  return rect.width > 0 && rect.height > 0;
+}
+function parentScoreHint(parent) {
+  const cls = String(parent?.className || '');
+  let score = 0;
+  if (/ExcalidrawObsidianMenu|tray-misc-tools-container|misc-tools|script|pinned/i.test(cls)) score -= 80;
+  if (/App-menu__right/i.test(cls)) score -= 30;
+  if (/layer|canvas|library|sidebar|popover|modal|Island/i.test(cls)) score += 80;
+  if (!parent || parent === document.body || parent === document.documentElement) score += 300;
+  return score;
+}
+
+function chooseEffectiveOffset(count, pinnedCount, configuredOffset) {
+  const candidates = uniqueStrings([configuredOffset, 2, 1, 0, 3, 4].map(String)).map(Number);
+  let best = { offset: configuredOffset, diff: Number.POSITIVE_INFINITY, penalty: 0 };
+  for (const offset of candidates) {
+    if (!Number.isFinite(offset) || offset < 0 || count < offset) continue;
+    const bindable = count - offset;
+    const diff = Math.abs(bindable - pinnedCount);
+    const penalty = offset === configuredOffset ? 0 : 6;
+    if (diff + penalty < best.diff + best.penalty) best = { offset, diff, penalty };
+  }
+  return best;
+}
+
+function groupNodesByParent(nodes) {
+  const map = new Map();
+  nodes.filter(visibleElement).forEach(node => {
+    const parent = node.parentElement;
+    if (!parent) return;
+    if (!map.has(parent)) map.set(parent, []);
+    map.get(parent).push(node);
+  });
+  return Array.from(map.entries()).map(([parent, nodes]) => ({ parent, nodes }));
+}
 
 class ExcalidrawToolbarManager extends Plugin {
   async onload() {
@@ -101,6 +166,7 @@ class ExcalidrawToolbarManager extends Plugin {
     this.styleEl = document.createElement('style');
     this.styleEl.id = 'excalidraw-toolbar-manager-style';
     document.head.appendChild(this.styleEl);
+    this.lastDetection = null;
 
     this.addSettingTab(new ExcalidrawToolbarManagerSettingTab(this.app, this));
 
@@ -303,17 +369,27 @@ class ExcalidrawToolbarManager extends Plugin {
     const clamp = maxLines > 1 ? `display:-webkit-box !important;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;` : '';
 
     this.styleEl.textContent = `
+.excalidraw .tray-misc-tools-container,
+.excalidraw .App-menu__right{overflow:visible !important;}
+.etm-toolbar-container{
+  display:grid !important;
+  grid-auto-flow:column !important;
+  grid-template-rows:repeat(var(--etm-rows), var(--etm-cellH)) !important;
+  grid-auto-columns:var(--etm-colW) !important;
+  row-gap:${safeNum(l.vGap, 14)}px !important;
+  column-gap:${safeNum(l.colGap, 10)}px !important;
+  align-content:start !important;
+  justify-content:start !important;
+  overflow:visible !important;
+  max-width:${safeNum(l.maxW, 430)}px !important;
+}
 .excalidraw .tray-misc-tools-container{
   --etm-rows:${safeNum(l.rows, 5)};
   --etm-iconH:${safeNum(l.itemH, 30)}px;
   --etm-titleH:${titleH}px;
   --etm-titleDistance:${dist}px;
   --etm-cellH:calc(var(--etm-iconH) + var(--etm-titleDistance) + var(--etm-titleH) + ${safeNum(l.blockPaddingY, 3) * 2}px);
-  --etm-vGap:${safeNum(l.vGap, 14)}px;
   --etm-colW:${safeNum(l.colW, 86)}px;
-  --etm-colGap:${safeNum(l.colGap, 10)}px;
-  --etm-maxW:${safeNum(l.maxW, 430)}px;
-  --etm-moveUp:${safeNum(l.moveUp, 60)}px;
   --etm-zoom:${safeNum(l.zoom, 1.25)};
   --etm-iconSize:${safeNum(l.iconSize, 30)}px;
   --etm-radius:${safeNum(l.blockRadius, 8)}px;
@@ -329,27 +405,36 @@ class ExcalidrawToolbarManager extends Plugin {
   --etm-titlePaddingX:${safeNum(l.titlePaddingX, 2)}px;
   --etm-titlePaddingY:${padY}px;
 }
-.excalidraw .tray-misc-tools-container,
-.excalidraw .App-menu__right{overflow:visible !important;}
-.excalidraw .tray-misc-tools-container{margin-top:calc(var(--etm-moveUp) * -1) !important;}
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu{
-  display:flex !important;
-  flex-flow:column wrap !important;
-  align-content:flex-start !important;
-  row-gap:var(--etm-vGap) !important;
-  column-gap:var(--etm-colGap) !important;
-  height:calc(var(--etm-rows) * var(--etm-cellH) + (var(--etm-rows) - 1) * var(--etm-vGap)) !important;
-  max-width:var(--etm-maxW) !important;
-  overflow-x:hidden !important;
-  overflow-y:visible !important;
-  background-image:none !important;
-}
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-title],
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default]{
-  flex:0 0 var(--etm-cellH) !important;
-  height:var(--etm-cellH) !important;
+.etm-unmanaged-button{
+  grid-column:var(--etm-controlColumn) !important;
   width:var(--etm-colW) !important;
-  margin:0 !important;
+  min-height:var(--etm-cellH) !important;
+  height:var(--etm-cellH) !important;
+  box-sizing:border-box !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  align-self:start !important;
+  justify-self:center !important;
+  padding:var(--etm-blockPaddingY) var(--etm-blockPaddingX) !important;
+  overflow:visible !important;
+}
+.etm-unmanaged-button .ToolIcon__icon{
+  height:var(--etm-iconH) !important;
+  width:100% !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+}
+.etm-unmanaged-button svg{
+  width:var(--etm-iconSize) !important;
+  height:var(--etm-iconSize) !important;
+}
+
+.etm-managed-button[data-etm-title],
+.etm-managed-button[data-etm-skipped-default]{
+  min-height:var(--etm-cellH) !important;
+  width:var(--etm-colW) !important;
   box-sizing:border-box !important;
   display:flex !important;
   flex-direction:column !important;
@@ -367,8 +452,8 @@ class ExcalidrawToolbarManager extends Plugin {
   z-index:1;
   overflow:visible !important;
 }
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-title]::after,
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default]::after{
+.etm-managed-button[data-etm-title]::after,
+.etm-managed-button[data-etm-skipped-default]::after{
   content:attr(data-etm-title);
   position:static !important;
   display:block !important;
@@ -391,22 +476,22 @@ class ExcalidrawToolbarManager extends Plugin {
   pointer-events:none;
   box-sizing:border-box;
 }
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default]::after{
+.etm-managed-button[data-etm-skipped-default]::after{
   content:"" !important;
   visibility:hidden !important;
 }
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-title]:hover,
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default]:hover{
+.etm-managed-button[data-etm-title]:hover,
+.etm-managed-button[data-etm-skipped-default]:hover{
   transform:scale(var(--etm-zoom)) !important;
   z-index:10 !important;
 }
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-title]:has(input:checked),
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default]:has(input:checked){
+.etm-managed-button[data-etm-title]:has(input:checked),
+.etm-managed-button[data-etm-skipped-default]:has(input:checked){
   transform:scale(var(--etm-zoom)) !important;
   z-index:8 !important;
 }
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-title] .ToolIcon__icon,
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default] .ToolIcon__icon{
+.etm-managed-button[data-etm-title] .ToolIcon__icon,
+.etm-managed-button[data-etm-skipped-default] .ToolIcon__icon{
   flex:0 0 var(--etm-iconH) !important;
   height:var(--etm-iconH) !important;
   width:100% !important;
@@ -414,49 +499,144 @@ class ExcalidrawToolbarManager extends Plugin {
   align-items:center !important;
   justify-content:center !important;
 }
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-title] .ToolIcon__icon svg,
-.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon[data-etm-skipped-default] .ToolIcon__icon svg{
+.etm-managed-button[data-etm-title] .ToolIcon__icon svg,
+.etm-managed-button[data-etm-skipped-default] .ToolIcon__icon svg{
   width:var(--etm-iconSize) !important;
   height:var(--etm-iconSize) !important;
   display:block !important;
-}`;
+}
+.etm-managed-button[data-etm-title] > svg,
+.etm-managed-button[data-etm-skipped-default] > svg{
+  width:var(--etm-iconSize) !important;
+  height:var(--etm-iconSize) !important;
+}
+`;
   }
 
   clearButtonAttrs() {
-    document.querySelectorAll('.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon').forEach(el => {
-      el.removeAttribute('data-etm-title');
-      el.removeClass?.('etm-managed-button');
-      el.removeAttribute('data-etm-skipped-default');
-      el.style.removeProperty('order');
-      if (el.getAttribute('data-etm-managed-title') === 'true') {
+    document.querySelectorAll('.etm-managed-button, .etm-toolbar-container, .etm-unmanaged-button').forEach(el => {
+      el.classList?.remove('etm-managed-button', 'etm-toolbar-container', 'etm-unmanaged-button');
+      el.style?.removeProperty('--etm-scriptCols');
+      el.style?.removeProperty('--etm-controlColumn');
+      el.removeAttribute?.('data-etm-title');
+      el.removeAttribute?.('data-etm-skipped-default');
+      el.style?.removeProperty('order');
+      if (el.getAttribute?.('data-etm-managed-title') === 'true') {
         el.removeAttribute('title');
         el.removeAttribute('data-etm-managed-title');
       }
     });
   }
 
+  getButtonSelectors() {
+    const selectors = [];
+    if (this.settings.buttonSelectorMode === 'custom' && this.settings.customButtonSelector?.trim()) {
+      selectors.push(this.settings.customButtonSelector.trim());
+    }
+    const configured = String(this.settings.buttonSelectorsText || '').split('\n').map(s => s.trim()).filter(Boolean);
+    selectors.push(...configured);
+    return uniqueStrings(selectors);
+  }
+
+  scanButtonCandidates() {
+    const pinnedCount = this.getPinnedScripts().length;
+    const configuredOffset = Math.max(0, safeNum(this.settings.leadingDefaultButtons, 2));
+    const candidates = [];
+
+    this.getButtonSelectors().forEach(selector => {
+      const allNodes = safeQueryAll(selector).filter(visibleElement);
+      const groups = groupNodesByParent(allNodes);
+
+      groups.forEach((group, groupIndex) => {
+        const count = group.nodes.length;
+        const parent = group.parent;
+        const parentClass = String(parent?.className || '').slice(0, 160);
+        const parentTag = parent?.tagName || '';
+        const offsetInfo = chooseEffectiveOffset(count, pinnedCount, configuredOffset);
+        const effectiveOffset = offsetInfo.offset;
+        const expected = pinnedCount + effectiveOffset;
+        const base = count >= effectiveOffset ? Math.abs((count - effectiveOffset) - pinnedCount) : 10000;
+        const broadPenalty = /\.excalidraw\s+\.ToolIcon|\[role="button"\]|button\[aria-label\]/.test(selector) ? 60 : 0;
+        const score = base + offsetInfo.penalty + parentScoreHint(parent) + broadPenalty;
+        candidates.push({
+          selector,
+          groupIndex,
+          count,
+          expected,
+          configuredOffset,
+          effectiveOffset,
+          bindableCount: Math.max(0, count - effectiveOffset),
+          score,
+          parentTag,
+          parentClass,
+          sample: group.nodes.slice(0, 3).map(n => `${n.tagName}.${String(n.className || '').slice(0, 60)}`).join(' | '),
+          nodes: group.nodes,
+          parent
+        });
+      });
+
+      // Also keep a fallback candidate when selector returns nodes but no useful same-parent group.
+      if (allNodes.length && !groups.length) {
+        candidates.push({ selector, groupIndex: -1, count: allNodes.length, expected: pinnedCount + configuredOffset, configuredOffset, effectiveOffset: configuredOffset, bindableCount: Math.max(0, allNodes.length - configuredOffset), score: 99999, parentTag: '', parentClass: '', sample: '', nodes: allNodes, parent: commonParent(allNodes) });
+      }
+    });
+
+    return candidates
+      .filter(c => c.count > 0)
+      .sort((a, b) => a.score - b.score || Math.abs(a.count - a.expected) - Math.abs(b.count - b.expected) || b.count - a.count);
+  }
+
+  detectButtons() {
+    const candidates = this.scanButtonCandidates();
+    const best = candidates.find(c => c.count >= Math.min(c.expected, 1));
+    if (!best) {
+      this.lastDetection = { selector: '', groupIndex: -1, count: 0, expected: this.getPinnedScripts().length + Math.max(0, safeNum(this.settings.leadingDefaultButtons, 2)), candidates };
+      return { buttons: [], container: null, detection: this.lastDetection };
+    }
+    this.lastDetection = { ...best, candidates };
+    return { buttons: best.nodes || [], container: best.parent || null, detection: this.lastDetection };
+  }
+
+
   applyButtonAttrs() {
     this.clearButtonAttrs();
     if (!this.settings.enabled) return;
     const pinned = this.getPinnedScripts();
-    const buttons = Array.from(document.querySelectorAll('.excalidraw .tray-misc-tools-container > .ExcalidrawObsidianMenu > label.ToolIcon'));
-    const offset = Math.max(0, safeNum(this.settings.leadingDefaultButtons, 2));
-    for (let j = 0; j < Math.min(offset, buttons.length); j++) {
-      buttons[j].setAttribute('data-etm-skipped-default', 'true');
-      buttons[j].removeAttribute('data-etm-title');
-      buttons[j].addClass?.('etm-managed-button');
-    }
+    const { buttons, container } = this.detectButtons();
+    const offset = Math.max(0, safeNum(this.lastDetection?.effectiveOffset, safeNum(this.settings.leadingDefaultButtons, 2)));
     const count = Math.min(Math.max(0, buttons.length - offset), pinned.length);
+    const managed = new Set();
+
+    for (let j = 0; j < Math.min(offset, buttons.length); j++) {
+      const btn = buttons[j];
+      btn.setAttribute('data-etm-skipped-default', 'true');
+      btn.removeAttribute('data-etm-title');
+      btn.classList?.add('etm-managed-button');
+      managed.add(btn);
+    }
+
     for (let i = 0; i < count; i++) {
       const btn = buttons[i + offset];
       const path = pinned[i];
       const name = this.getDisplayName(path);
       btn.setAttribute('data-etm-title', name);
-      btn.addClass?.('etm-managed-button');
+      btn.classList?.add('etm-managed-button');
+      managed.add(btn);
       if (this.settings.showNativeTitle) {
         btn.setAttribute('title', name);
         btn.setAttribute('data-etm-managed-title', 'true');
       }
+    }
+
+    if (container) {
+      const rows = Math.max(1, safeNum(this.settings.layout.rows, 5));
+      const scriptCols = Math.max(1, Math.ceil((offset + count) / rows));
+      container.classList?.add('etm-toolbar-container');
+      container.style?.setProperty('--etm-scriptCols', String(scriptCols));
+      container.style?.setProperty('--etm-controlColumn', String(scriptCols + 1));
+      Array.from(container.children || []).forEach(child => {
+        if (!managed.has(child)) child.classList?.add('etm-unmanaged-button');
+      });
     }
   }
 }
@@ -473,7 +653,7 @@ class ExcalidrawToolbarManagerSettingTab extends PluginSettingTab {
     el.empty();
     el.addClass('excalidraw-toolbar-manager-settings');
     el.createEl('h2', { text: 'Excalidraw Toolbar Manager' });
-    el.createEl('p', { text: '按 Excalidraw 原生 pinnedScripts 顺序绑定标题；支持拖拽调整 pinnedScripts 列表，但不使用视觉 order 重排，避免按钮功能错位。' });
+    el.createEl('p', { text: '按 Excalidraw 原生 pinnedScripts 顺序绑定标题；脚本按钮恢复多列网格，右侧锁定/手掌等原生控制按钮放入独立控制列，避免被挤到底部。' });
     this.tabs(el);
     const body = el.createDiv({ cls: 'etm-tab-content' });
     if (this.active === 'basic') this.basic(body);
@@ -506,6 +686,21 @@ class ExcalidrawToolbarManagerSettingTab extends PluginSettingTab {
       .addText(t => t.setValue(String(s.leadingDefaultButtons ?? 2)).onChange(async v => {
         const n = Number(v);
         s.leadingDefaultButtons = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 2;
+        await this.plugin.saveSettings();
+      }));
+    new Setting(el)
+      .setName('按钮选择器模式')
+      .setDesc('auto 会按候选选择器并按父容器分组自动匹配，避免误选 Excalidraw 原生控制按钮；custom 使用下面的手动选择器。')
+      .addDropdown(d => d.addOption('auto', '自动匹配').addOption('custom', '手动选择器').setValue(s.buttonSelectorMode || 'auto').onChange(async v => {
+        s.buttonSelectorMode = v;
+        await this.plugin.saveSettings();
+        this.display();
+      }));
+    new Setting(el)
+      .setName('手动按钮选择器')
+      .setDesc('当自动匹配失败时填写。例：.excalidraw .ToolIcon')
+      .addText(t => t.setValue(s.customButtonSelector || '').setPlaceholder('.excalidraw .ToolIcon').onChange(async v => {
+        s.customButtonSelector = v.trim();
         await this.plugin.saveSettings();
       }));
   }
