@@ -1,0 +1,10 @@
+{
+  "id": "excalidraw-toolbar-manager",
+  "name": "Excalidraw Toolbar Manager",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Excalidraw toolbar title labels with drag reorder, cleaned settings, and centralized data.json backups keeping latest 10 versions.",
+  "author": "SuSequs-X",
+  "authorUrl": "https://github.com/SuSequs-X/ob-excalidraw-toolbar-manager",
+  "isDesktopOnly": false
+}

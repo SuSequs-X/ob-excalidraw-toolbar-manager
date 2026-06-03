@@ -1,0 +1,31 @@
+.excalidraw-toolbar-manager-settings .etm-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 16px;border-bottom:1px solid var(--background-modifier-border);padding-bottom:8px}
+.excalidraw-toolbar-manager-settings .etm-tab{border:1px solid var(--background-modifier-border);background:var(--background-secondary);color:var(--text-normal);border-radius:8px;padding:6px 10px;cursor:pointer}
+.excalidraw-toolbar-manager-settings .etm-tab.is-active{background:var(--interactive-accent);color:var(--text-on-accent);border-color:var(--interactive-accent)}
+.excalidraw-toolbar-manager-settings .etm-help,.excalidraw-toolbar-manager-settings .etm-path-hint{color:var(--text-muted);font-size:12px;margin:6px 0 12px;user-select:text}
+.excalidraw-toolbar-manager-settings .etm-json,.excalidraw-toolbar-manager-settings .etm-config{width:100%;min-height:180px;font-family:var(--font-monospace);font-size:12px;box-sizing:border-box}
+.excalidraw-toolbar-manager-settings .etm-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.excalidraw-toolbar-manager-settings .etm-row{display:grid;grid-template-columns:32px minmax(0,1fr) minmax(180px,1fr) auto;gap:8px;align-items:center;padding:8px;border:1px solid var(--background-modifier-border);border-radius:8px;background:var(--background-secondary)}
+.excalidraw-toolbar-manager-settings .etm-index{font-family:var(--font-monospace);color:var(--text-muted);text-align:center}
+.excalidraw-toolbar-manager-settings .etm-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.excalidraw-toolbar-manager-settings .etm-subtitle{color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.excalidraw-toolbar-manager-settings .etm-name-input{width:100%;box-sizing:border-box}
+.excalidraw-toolbar-manager-settings .etm-actions{display:flex;gap:4px;flex-wrap:nowrap}
+.excalidraw-toolbar-manager-settings .etm-style-sample{display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-start;margin:12px 0;padding:6px 8px;box-sizing:border-box}
+.excalidraw-toolbar-manager-settings .etm-style-sample-icon{height:30px;display:flex;align-items:center;justify-content:center;font-size:20px}
+.excalidraw-toolbar-manager-settings .etm-style-sample-title{font-size:11px;text-align:center;line-height:1.15}
+.excalidraw-toolbar-manager-settings .etm-color-text{min-width:260px}
+.excalidraw-toolbar-manager-settings .etm-color-swatch{width:24px;height:24px;border:1px solid var(--background-modifier-border);border-radius:6px;margin-left:6px}
+
+.excalidraw-toolbar-manager-settings .etm-color-picker{
+  width:32px;
+  height:26px;
+  padding:0;
+  border:1px solid var(--background-modifier-border);
+  border-radius:6px;
+  background:transparent;
+  cursor:pointer;
+}
+
+.excalidraw-toolbar-manager-settings .etm-handle{cursor:grab;color:var(--text-muted);text-align:center;user-select:none}
+.excalidraw-toolbar-manager-settings .etm-row.is-dragging{opacity:.55}
+.excalidraw-toolbar-manager-settings .etm-row.is-drag-over{outline:2px solid var(--interactive-accent)}
